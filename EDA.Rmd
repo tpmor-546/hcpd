@@ -1,0 +1,334 @@
+---
+title: "EDA"
+author: "Timothy P Morris"
+date: "10/25/2021"
+output: html_document
+description: Behavioral data from HCP-D was requested via PI at Harvard and came in multiple csv files with raw data incorporating parent surveys, child surveys, child demographics and NIH toolbox measures. This script cleans, tidies and combines all data into workable dataframes and performaes intial EDA. 
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(janitor)
+```
+
+# EDA- import raw data
+```{r cars}
+setwd("/work/cbhlab/Tim/hcp-d")
+
+# importing data pull from Leah Somerville June 2020
+library(readr)
+X20200527_SomervilleKramerDataRequest_REDCapChild <- read_csv("20200527_SomervilleKramerDataRequest_REDCapChild.csv")
+
+X20200527_SomervilleKramerDataRequest_REDCapParent <- read_csv("20200527_SomervilleKramerDataRequest_REDCapParent.csv")
+
+SomervilleKramer_RePull_SCORES_Duplicates_Removed_Process <- read_csv("SomervilleKramer RePull SCORES Duplicates Removed Process.csv")
+
+SCORES_clean_wdomnondom <- read_csv("SCORES_clean_wdomnondom.csv") # cleaned some of this data in csv file before importing 
+
+matrix <- read_csv("20200605_ SomervilleKramerDataRequest_REDCapQ-Interactive_MatrixReasoning.csv") # matrix reasoing task results
+
+```
+# EDA- convert each import to tidy
+```{r}
+
+SCORES_clean_wdomnondom <-SCORES_clean_wdomnondom[ !(SCORES_clean_wdomnondom$subject_id %in% NA), ] # remove rows with missing subject ID 
+
+#convert from csv raw data redcap pull to clean df
+pop2 <- SCORES_clean_wdomnondom %>%
+  pivot_longer(`Age-Corrected Standard Score`:`Age-Corrected Standard Scores Non-Dominant`, names_to = "scorename", values_to = "score")
+
+pop3 <- pop2 %>% 
+  group_by(subject_id, Inst, scorename) %>%
+  mutate(rn = row_number()) %>%
+  pivot_wider(names_from = Inst, values_from = score)
+
+pop4 <- pop3 %>%
+  pivot_wider(
+    names_from = scorename,
+    names_sep = ".",
+    values_from = c(`Cognition Total Composite Score v1.1`:`NIH Toolbox Standing Balance Test Age 7+ v2.0`)
+  )
+
+pop5 <- pop4 %>% distinct(subject_id, .keep_all = TRUE)  # removes duplicate rows
+
+# create workable dfs
+scores_clean_wide <- pop5
+child <- X20200527_SomervilleKramerDataRequest_REDCapChild
+parent <- X20200527_SomervilleKramerDataRequest_REDCapParent
+
+```
+# EDA - child dataframe 
+```{r}
+# this df contains demographic info in raw format
+
+tabyl(child$gender, sort = TRUE) # 1 = MALE, 2 = FEMALE
+hist(child$age) # in years . person months 
+hist(child$`Height(inches)`) # converted using excel formula
+hist(child$`height(cm)`) # converted using excel formula
+hist(child$weight) # in pounds
+# splitting blood pressure into systolic and diastolic (came as non-numeric value in raw csv)
+systolic <- child$bpressure
+systolic1 <- substr(systolic, 1, regexpr("\\/", systolic)-1)
+diastolic <- gsub(".*/","",systolic)
+child['systolicbp']<-systolic1
+child['diastolicbp']<-diastolic
+hist(child$systolicbp)
+hist(child$diastolicbp)
+range(child$systolicbp, na.rm = TRUE) # one subject with value of 237 (probably error in inputting)
+range(child$diastolicbp, na.rm = TRUE)
+
+tabyl(child$bisbas1, sort = TRUE)
+tabyl(child$pds_sub_score, sort = TRUE)
+tabyl(child$pds_sub_cat, sort = TRUE)
+tabyl(child$pubertal_sub_score, sort = TRUE)
+tabyl(child$mstrl_sub1a_age, sort = TRUE)
+```
+#EDA - parent surveys
+```{r}
+# SES and education of parent 
+
+#education (only have parent educaiton that filled out form- do not know if mother or father- that infor was collected according to data dict but not in our spreadsheet)
+# reformat parent education to numeric
+x <- as.factor(parent$p_grade)
+levels(x)
+parent$educ[x == "5TH GRADE;"] <- 1
+parent$educ[x == "8TH GRADE;"] <- 2
+parent$educ[x == "9TH GRADE;"] <- 3
+parent$educ[x == "10TH GRADE;"] <- 4
+parent$educ[x == "12TH GRADE, NO DIPLOMA;"] <- 5
+parent$educ[x == "HIGH SCHOOL GRADUATE;"] <- 6
+parent$educ[x == "GED OR EQUIVALENT;"] <- 7
+parent$educ[x == "SOME COLLEGE, NO DEGREE;"] <- 8
+parent$educ[x == "ASSOCIATE DEGREE: OCCUPATIONAL, TECHNICAL, OR VOCATIONAL PROGRAM;"] <- 9
+parent$educ[x == "ASSOCIATE DEGREE: ACADEMIC PROGRAM;" ] <- 10
+parent$educ[x == "BACHELOR'S DEGREE (EXAMPLE: BA, AB, BS, BBA);"] <- 11
+parent$educ[x == "MASTER'S DEGREE (EXAMPLE: MA, MS, MEng, MEd, MBA);" ] <- 12
+parent$educ[x == "PROFESSIONAL SCHOOL DEGREE (EXAMPLE: MD, DDS, DVM, JD);"] <- 13
+parent$educ[x == "DOCTORAL DEGREE (EXAMPLE:PhD, EdD);" ] <- 14
+parent$educ[x == "REFUSED;"] <- "NA"
+
+parent$educ <- as.numeric(parent$educ)
+hist(parent$educ)
+
+#reformat family income to numeric
+y <- parent$family_income
+levels(y)
+parent$SES <- "zero"
+parent$SES[parent$family_income <=4900] <- "1"
+parent$SES[parent$family_income >= 5000 & parent$family_income <= 11999] <- "2"
+parent$SES[parent$family_income >= 12000 & parent$family_income <= 15999] <- "3"
+parent$SES[parent$family_income >= 16000 & parent$family_income <= 24999] <- "4"
+parent$SES[parent$family_income >= 25000 & parent$family_income <= 34999] <- "5"
+parent$SES[parent$family_income >= 35000 & parent$family_income <= 49999] <- "6"
+parent$SES[parent$family_income >= 50000 & parent$family_income <= 74999] <- "7"
+parent$SES[parent$family_income >= 75000 & parent$family_income <= 99999] <- "8"
+parent$SES[parent$family_income >= 100000 & parent$family_income <= 199999] <- "9"
+parent$SES[parent$family_income >= 200000] <- "10"
+parent$SES <- as.numeric(parent$SES)
+hist(parent$SES)
+tabyl(parent$SES)
+
+# create summary count of sporting and creative activities engagment.
+#Each var is a yes or no repsonse (1 or 0) to question of whether child participated in given sport in last 12 months
+parent$sai_PA_count_total <- parent$sai_p_activities___0 + parent$sai_p_activities___2 + parent$sai_p_activities___3 + parent$sai_p_activities___4 
++ parent$sai_p_activities___5 + parent$sai_p_activities___6 + parent$sai_p_activities___7 + parent$sai_p_activities___8 + parent$sai_p_activities___9 + parent$sai_p_activities___10  + parent$sai_p_activities___11 + parent$sai_p_activities___12 + parent$sai_p_activities___13 + parent$sai_p_activities___14 + parent$sai_p_activities___15 + parent$sai_p_activities___16 + parent$sai_p_activities___17 + parent$sai_p_activities___18 + parent$sai_p_activities___19 + parent$sai_p_activities___20 + parent$sai_p_activities___21 + parent$sai_p_activities___22 
+
+# create sport categories 
+
+hcpd$PA_cat12[hcpd$pa_count_12 == 0] <- "None"
+hcpd$PA_cat12[hcpd$pa_count_12 == 1] <- "One"
+hcpd$PA_cat12[hcpd$pa_count_12 >= 2] <- "Two or More"
+
+parent$sai_creative_count_total <- parent$sai_p_activities___23 + parent$sai_p_activities___24 + parent$sai_p_activities___25 + parent$sai_p_activities___26
++ parent$sai_p_activities___27 + parent$sai_p_activities___28 + parent$sai_p_activities___29
+
+range(parent$sai_count_total)
+hist(parent$sai_count_total)
+hist(parent$sai_creative_count_total)
+
+parent['sai_frequency']<-frequency$Frequency
+parent$sai_frequency
+hist(parent$sai_frequency)
+
+# create creative activity categories
+hcpd$creative_cat_12[hcpd$creative_count_12 == 0] <- "None"
+hcpd$creative_cat_12[hcpd$creative_count_12 == 1] <- "One"
+hcpd$creative_cat_12[hcpd$creative_count_12 >= 2] <- "Two or More"
+
+```
+# EDA- NIH toolbox scores (motor and cognition only)
+```{r}
+z <- scores_clean_wide$`NIH Toolbox 4-Meter Walk Gait Speed Test Age 7+ v2.0.RawScore`
+
+y <- as.numeric(as.character(unlist(z)))
+
+hcpd$`NIH Toolbox 4-Meter Walk Gait Speed Test Age 7+ v2.0.RawScore` <- as.numeric(as.character(unlist(hcpd$`NIH Toolbox 4-Meter Walk Gait Speed Test Age 7+ v2.0.RawScore`)))
+
+
+scores_clean_wide$`NIH Toolbox 4-Meter Walk Gait Speed Test Age 7+ v2.0.Age-Corrected Standard Score`
+class
+# 2 minute walk endurance 3+ (raw, nat percentile, uncorrected standard score, age corrected standard score)
+scores_clean_wide$`NIH Toolbox 2-Minute Walk Endurance Test Age 3+ v2.0.Age-Corrected Standard Score`
+scores_clean_wide$`NIH Toolbox 2-Minute Walk Endurance Test Age 3+ v2.0.RawScore`
+# Grip strength 3+ (dominant and non-dominant hand age corrected scores)
+scores_clean_wide$`NIH Toolbox Grip Strength Test Age 3+ v2.0.Age-Corrected Standard Scores Dominant`
+scores_clean_wide$`NIH Toolbox Grip Strength Test Age 3+ v2.0.Age-Corrected Standard Scores Non-Dominant`
+scores_clean_wide$`NIH Toolbox Grip Strength Test Age 3+ v2.0.RawScore`
+# 9-hole pegboard dexterity 3+ (dominant and non-dominant hand age corrected scores)
+scores_clean_wide$`NIH Toolbox 9-Hole Pegboard Dexterity Test Age 3+ v2.0.Age-Corrected Standard Scores Dominant`
+scores_clean_wide$`NIH Toolbox 9-Hole Pegboard Dexterity Test Age 3+ v2.0.Age-Corrected Standard Scores Non-Dominant`
+# Standing balance 7+ (ALL NULL)
+
+#Cognition 
+scores_clean_wide$`NIH Toolbox Picture Sequence Memory Test Age 8+ Form A v2.1.Age-Corrected Standard Score`
+
+# crystallized composite (age corrected)
+scores_clean_wide$`Cognition Crystallized Composite v1.1.Age-Corrected Standard Score`
+hist(scores_clean_wide$`Cognition Crystallized Composite v1.1.Age-Corrected Standard Score`)
+# fluid composite (age corrected)
+scores_clean_wide$`Cognition Fluid Composite v1.1.Age-Corrected Standard Score`
+hist(scores_clean_wide$`Cognition Fluid Composite v1.1.Age-Corrected Standard Score`)
+# total cognition composite (age corrected)
+scores_clean_wide$`Cognition Total Composite Score v1.1.Age-Corrected Standard Score`
+hist(scores_clean_wide$`Cognition Total Composite Score v1.1.Age-Corrected Standard Score`)
+```
+# Merge dataset anbd more data wrangling 
+```{r}
+
+
+                                      ############ MERGING DATASETS ############
+names(child)[names(child)=="child_id"] <- "subject_id"
+names(parent)[names(parent)=="child_id"] <- "subject_id"
+names(matrix)[names(matrix)=="subjectid"] <- "subject_id"
+
+
+hpcd_test <- merge(scores_clean_wide, child, by="subject_id")
+hcpd_test <- merge(hpcd, parent, by="subject_id") 
+hcpd_test <- merge(hcpd, matrix, by="subject_id") 
+
+hcpd$matrix
+
+hcpd$weight
+hcpd$weightkg <- hcpd$weight*0.45
+hcpd$`height(cm)`
+hcpd$heightm <- hcpd$`height(cm)`/100
+
+hcpd$bmi <- hcpd$weightkg/(hcpd$heightm * hcpd$heightm)
+
+
+#### AGE groups in main hcpd dataset
+
+# school grade spilts (elementary 5-11, middle 12-14, high 15-18)
+
+options(digits=1)
+x <- hcpd$age.x
+hcpd$age.x
+
+hcpd$agecat1 <- "0"
+hcpd$agecat1[hcpd$age.x >=12] <- "1"
+hcpd$agecat1[hcpd$age.x >=15] <- "2"
+
+# SES
+
+library(car) # package to instal first
+hcpd$family_income <- recode(hcpd$family_income, "999999=NaN") #takes the dataframe and recodes all "NA" to "NaN"
+hcpd$family_income <- recode(hcpd$family_income, "99999999=NaN") #takes the dataframe and recodes all "NA" to "NaN"
+hist(hcpd$family_income)
+tabyl(hcpd$family_income)
+
+
+hcpd$SES <- "zero"
+hcpd$SES[hcpd$family_income <=4900] <- "1"
+hcpd$SES[hcpd$family_income >= 5000 & hcpd$family_income <= 11999] <- "2"
+hcpd$SES[hcpd$family_income >= 12000 & hcpd$family_income <= 15999] <- "3"
+hcpd$SES[hcpd$family_income >= 16000 & hcpd$family_income <= 24999] <- "4"
+hcpd$SES[hcpd$family_income >= 25000 & hcpd$family_income <= 34999] <- "5"
+hcpd$SES[hcpd$family_income >= 35000 & hcpd$family_income <= 49999] <- "6"
+hcpd$SES[hcpd$family_income >= 50000 & hcpd$family_income <= 74999] <- "7"
+hcpd$SES[hcpd$family_income >= 75000 & hcpd$family_income <= 99999] <- "8"
+hcpd$SES[hcpd$family_income >= 100000 & hcpd$family_income <= 199999] <- "9"
+hcpd$SES[hcpd$family_income >= 200000] <- "10"
+hcpd$SES <- as.numeric(hcpd$SES)
+hist(hcpd$SES)
+tabyl(hcpd$SES)
+
+
+
+tabyl(hcpd$SES)
+class(hcpd$SES)
+levels(hcpd$SES)
+hcpd$SES <- as.numeric(hcpd$SES)
+hcpd$SES <- as.factor(hcpd$SES)
+#NIH motor toolbox unlisting
+
+hcpd$`NIH Toolbox 4-Meter Walk Gait Speed Test Age 7+ v2.0.RawScore` <- as.numeric(as.character(unlist(hcpd$`NIH Toolbox 4-Meter Walk Gait Speed Test Age 7+ v2.0.RawScore`)))
+
+hcpd$`NIH Toolbox 2-Minute Walk Endurance Test Age 3+ v2.0.Age-Corrected Standard Score` <- as.numeric(as.character(unlist(hcpd$`NIH Toolbox 2-Minute Walk Endurance Test Age 3+ v2.0.Age-Corrected Standard Score`)))
+
+hcpd$`NIH Toolbox Grip Strength Test Age 3+ v2.0.Age-Corrected Standard Scores Dominant` <- as.numeric(as.character(unlist(hcpd$`NIH Toolbox Grip Strength Test Age 3+ v2.0.Age-Corrected Standard Scores Dominant`)))
+
+hcpd$`NIH Toolbox 9-Hole Pegboard Dexterity Test Age 3+ v2.0.Age-Corrected Standard Scores Dominant` <- as.numeric(as.character(unlist(hcpd$`NIH Toolbox 9-Hole Pegboard Dexterity Test Age 3+ v2.0.Age-Corrected Standard Scores Dominant`)))
+
+
+### in depth PA engagment and frequency 
+
+#0, Ballet, Dance | 1, Baseball, Softball | 2, Basketball | 3, Climbing | 4, Field Hockey | 
+#5, Football | 6, Gymnastics | 7, Ice Hockey | 8, Horseback Riding, Polo | 9, Ice or Inline Skating | 
+#10, Martial Arts | 11, Lacrosse | 12, Rugby | 13, Skateboarding | 14, Skiing, Snowboarding | 
+#15, Soccer | 16, Surfing | 17, Swimming, Water Polo | 18, Tennis | 19, Track, Running, Cross-country |
+#20, Wresting, Mixed Martial Arts | 21, Volleyball | 22, Yoga, Tai Chi | 
+#23, Musical Instrument (Singing, Choir, Guitar, Piano, Drums, Violin, Flute, Band, Rock Band, Orchestra) | 
+#24, Drawing, Painting, Graphic Art, Photography, Pottery, Sculpting | 25, Drama, Theater, Acting, Film | 
+#26, Crafts like Knitting, Building Model Cars or Airplanes | 27, Competitive Games like Chess, Cards, or Darts | 
+#28, Hobbies like collecting stamps or coins | 29, My child has not participated in any of the above activities
+
+# count of did child EVER participate in following activities
+
+parent$sai_PA_count_total <- parent$sai_p_activities___0 + parent$sai_p_activities___2 + parent$sai_p_activities___3 + parent$sai_p_activities___4 
++ parent$sai_p_activities___5 + parent$sai_p_activities___6 + parent$sai_p_activities___7 + parent$sai_p_activities___8 + parent$sai_p_activities___9 + parent$sai_p_activities___10  
++ parent$sai_p_activities___11 + parent$sai_p_activities___12 + parent$sai_p_activities___13 + parent$sai_p_activities___14 + parent$sai_p_activities___15
++ parent$sai_p_activities___16 + parent$sai_p_activities___17 + parent$sai_p_activities___18 + parent$sai_p_activities___19 + parent$sai_p_activities___20
++ parent$sai_p_activities___21 + parent$sai_p_activities___22 
+
+# create cats
+hcpd$PA_cat[hcpd$sai_PA_count_total == 0] <- "None"
+hcpd$PA_cat[hcpd$sai_PA_count_total == 1] <- "One"
+hcpd$PA_cat[hcpd$sai_PA_count_total > 1] <- "Two or More"
+
+# Count of did child participate in any of the following activities in last 12 months? 
+
+hcpd$sai_p_yoga_p12[is.na(hcpd$sai_p_yoga_p12)] <- 0
+
+hcpd$pa_count_12 <- hcpd$sai_p_dance_p12 + hcpd$sai_p_base_p12 + hcpd$sai_p_basket_p12 + hcpd$sai_p_climb_p12 + hcpd$sai_p_fhock_p12 + 
+hcpd$sai_p_fball_p12 + hcpd$sai_p_gym_p12 + hcpd$sai_p_ihock_p12 + hcpd$sai_p_polo_p12 + hcpd$sai_p_iskate_p12 + hcpd$sai_p_m_arts_p12 +
+hcpd$sai_p_lax_p12 + hcpd$sai_p_rugby_p12 + hcpd$sai_p_skate_p12 + hcpd$sai_p_sboard_p12 + hcpd$sai_p_soc_p12 + hcpd$sai_p_surf_p12 +
+hcpd$sai_p_wpolo_p12 + hcpd$sai_p_tennis_p12 + hcpd$sai_p_run_p12 + hcpd$sai_p_mma_p12 + hcpd$sai_p_vball_p12 + hcpd$sai_p_yoga_p12
+
+# create categories 
+
+hcpd$PA_cat12[hcpd$pa_count_12 == 0] <- "None"
+hcpd$PA_cat12[hcpd$pa_count_12 == 1] <- "One"
+hcpd$PA_cat12[hcpd$pa_count_12 >= 2] <- "Two or More"
+
+class(hcpd$PA_cat12)
+hcpd$PA_cat12 <- as.factor(hcpd$PA_cat12)
+hist(hcpd$PA_cat12)
+library(janitor)
+tabyl(hcpd$pa_count_12, sort = TRUE)
+
+# same but for creative activities
+hcpd$sai_p_collect_p12[is.na(hcpd$sai_p_collect_p12)] <- 0
+
+hcpd$creative_count_12 <- hcpd$sai_p_music_p12 + hcpd$sai_p_art_p12 + hcpd$sai_p_drama_p12 + hcpd$sai_p_crafts_p12 + hcpd$sai_p_chess_p12 +
+  hcpd$sai_p_collect_p12 
+
+
+hcpd$creative_cat_12[hcpd$creative_count_12 == 0] <- "None"
+hcpd$creative_cat_12[hcpd$creative_count_12 == 1] <- "One"
+hcpd$creative_cat_12[hcpd$creative_count_12 >= 2] <- "Two or More"
+
+```
+
+
