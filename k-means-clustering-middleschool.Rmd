@@ -1,0 +1,212 @@
+---
+title: "middle_k_means"
+author: "Timothy P Morris"
+date: "10/27/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(tidymodels)
+library(psych)
+library(corrr)
+library(nlme)
+library(ggstatsplot)
+library(glmnet)
+library(fpc)
+```
+# load and tidy data
+```{r}
+#load and sort data data
+setwd("/Users/timothymorris/iCloud/Studies/hcpd") 
+
+load(file = "hd8.Rdata") # loads from "hcpdi_kmeans.rmd" which removed some outliers from grip strength. 
+
+middle <- hd8 %>% dplyr::filter(hd8$age < 12.99)
+```
+# EDA
+```{r}
+#library(psych)
+describe(middle)
+
+demos <- middle %>%
+  select(bmi,
+         sex,
+         educ,
+         age,
+         SES,
+         pds)
+print(kable(middleniih))
+pairs.panels(demos)
+
+nih <- middle %>%
+  select(walk_enduro, 
+         gait_speed,
+         dexterity,
+         grip_strength)
+pairs.panels(nih)
+
+#library(corrr)
+middle %>%
+  select(age,bmi:grip_strength) %>%
+  na.omit() %>%
+  correlate() %>%
+  rearrange() %>%
+  network_plot(colours = c("orange", "white", "midnightblue"))
+```
+#                                                 ####### k-means clustering #######
+# k-means
+```{r}
+#unsclaed all vars
+toolbox <- middle %>%
+  select(walk_enduro,
+         gait_speed,
+         grip_strength,
+         dexterity)
+#scaled all vars
+toolbox <- as_tibble(scale(toolbox))
+#unscaled only those vars with T-score
+
+# run across multiple sizes of k
+kclusts <- 
+  tibble(k = 1:9) %>%
+  mutate(
+    kclust = map(k, ~kmeans(toolbox, .x)),
+    tidied = map(kclust, tidy),
+    glanced = map(kclust, glance),
+    augmented = map(kclust, augment, toolbox)
+  )
+
+kclusts
+
+# tidy output across k sizes
+clusters <- 
+  kclusts %>%
+  unnest(cols = c(tidied))
+
+assignments <- 
+  kclusts %>% 
+  unnest(cols = c(augmented))
+
+clusterings <- 
+  kclusts %>%
+  unnest(cols = c(glanced))
+
+#plot with two vars each time
+p1 <- 
+  ggplot(assignments, aes(x = dexterity, y = walk_enduro)) +
+  geom_point(aes(color = .cluster), alpha = 0.8) + 
+  geom_point(data = clusters, size = 10, shape = "x") +
+  facet_wrap(~ k)
+p1
+
+#scree plot
+ggplot(clusterings, aes(k, tot.withinss)) +
+  geom_line() +
+  geom_point()
+
+# choose final k based on plots and scree plot FOR @ 
+set.seed(758)
+final_clust <- kmeans(toolbox, centers = 2)
+final_clust
+middle$cluster2 <- final_clust$cluster
+
+#create df of center of clusters values
+centers <- as_tibble(final_clust[["centers"]])
+centers$cluster = c(1,2)
+
+#2 clusters
+centers_long <- centers %>%
+  pivot_longer(!cluster, names_to = "scale", values_to = "score")
+
+centers_long$cluster <- as.factor(centers_long$cluster)
+
+ggplot(centers_long) +
+  geom_bar( aes(x=scale, y=score, fill=cluster), stat="identity", alpha=0.5, position = position_dodge()) 
+  
+#scale_x_discrete(limits = c("dexterity", "gait_speed", "grip_strength", "walk_enduro"))
+
+#FINAL CLUSTERS FOR 3
+
+final_clust3 <- kmeans(toolbox, centers = 3)
+final_clust3
+middle$cluster3 <- final_clust3$cluster
+
+#create df of center of clusters values
+centers3 <- as_tibble(final_clust3[["centers"]])
+centers3$cluster = c(1,2,3)
+
+# RUN BAR PLOTS TO VIZUALIZE CLUSTER CENTER
+
+# 3 
+centers3_long <- centers3 %>%
+  pivot_longer(!cluster, names_to = "scale", values_to = "score")
+
+centers3_long$cluster <- as.factor(centers3_long$cluster)
+
+ggplot(centers3_long) +
+  geom_bar( aes(x=scale, y=score, fill=cluster), stat="identity", alpha=0.5, position = position_dodge()) 
+```
+#save data
+```{r}
+save(middle, file = "middle.Rdata")
+load(file = "middle.Rdata")
+```
+#bootstrap k-means
+```{r}
+#library(fpc)
+# chnage k for each cluster number
+clustBoot <- clusterboot(toolbox, B = 100,
+                         clustermethod = kmeansCBI,
+                         k = 3, seed = 12345,
+                         showplots = TRUE)
+clustBoot # gives jaccard index 
+```
+# test for differences in cognition between cluster assingment phenogroups
+```{r}
+
+diagnostics <-function(x,y) {
+  par(mfrow=c(2,2)) #plots 4 plots to visually check assumptions 
+  plot(lm({{x}} ~ {{y}}))
+}
+
+diagnostics(middle$cog_fluid, middle$age)
+
+
+#library(nlme)
+# fluid cognition in whole group
+summary(lme(cog_fluid~cluster2 + age + sex + SES + pds, random=~1|site, data=middle)) # 2 clusters
+summary(lme(cog_fluid~cluster3 + age  + sex + SES + pds, random=~1|site, data=middle)) # 3 clusters
+
+# crystal cognition in whole group
+summary(lme(cog_crystal~cluster2 + sex + age + SES + pds, random=~1|subject_id, data=middle)) # 2 clusters
+summary(lme(cog_crystal~cluster3 + sex + age + SES + pds, random=~1|subject_id, data=middle)) # 3 clusters
+summary(lme(cog_crystal~pa + sex + age + SES + pds, random=~1|subject_id, data=middle)) # 3 clusters
+
+#total cognition
+summary(lme(cog_total~cluster2 + sex + age + SES + pds, random=~1|site, data=middle)) # 2 clusters
+summary(lme(cog_total~cluster3 + sex + age + SES + pds, random=~1|site, data=middle)) # 3 clusters
+
+library(ggstatsplot)
+plt <- ggbetweenstats(
+  data = middle,
+  x = cluster2,
+  y = cog_fluid) + 
+  theme(
+    axis.ticks = element_blank(),
+    axis.line = element_line(colour = "grey50"),
+    panel.grid = element_line(color = "#b4aea9"),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(linetype = "dashed"),
+    panel.background = element_rect(fill = "#fbf9f4", color = "#fbf9f4"),
+    plot.background = element_rect(fill = "#fbf9f4", color = "#fbf9f4")
+    )
+plt
+# https://www.r-graph-gallery.com/web-violinplot-with-ggstatsplot.html 
+
+```
+#                    
